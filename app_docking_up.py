@@ -20,6 +20,31 @@ from Bio.PDB import PDBParser
 from scipy.spatial import cKDTree
 
 
+
+def _find_vina() -> list[str]:
+    """Retourne la commande à exécuter pour Vina, multi-plateforme."""
+    import os, shutil
+    # 1) variable d’environnement VINA_BIN
+    vina_env = os.environ.get("VINA_BIN")
+    if vina_env and os.path.exists(vina_env):
+        return [vina_env]
+    # 2) via PATH
+    for name in ("vina", "vina.exe"):
+        if shutil.which(name):
+            return [name]
+    # 3) chemins Windows courants
+    for c in (r"C:\vina\vina.exe",
+              r"C:\vina\vina_1.2.3_windows_x86_64.exe",
+              r"C:\Program Files\Vina\vina.exe"):
+        if os.path.exists(c):
+            return [c]
+    raise RuntimeError(
+        "AutoDock Vina introuvable.\n"
+        "Définis VINA_BIN (ex: C:\\vina\\vina.exe) ou ajoute C:\\vina au PATH."
+    )
+
+
+
 # =========================
 # ====== UTILITAIRES ======
 # =========================
@@ -101,7 +126,7 @@ def visualize(protein_pdb: str, ligand_mol: Chem.Mol | None) -> str:
 def mol_properties(mol: Chem.Mol) -> dict:
     """Propriétés classiques RDKit."""
     return {
-        "MolWt (g/mol)": round(Descriptors.MolWt(mol), 2),
+        "MolWt": round(Descriptors.MolWt(mol), 2),
         "LogP": round(Crippen.MolLogP(mol), 2),
         "tPSA": round(rdmd.CalcTPSA(mol), 2),
         "HBA": int(Lipinski.NumHAcceptors(mol)),
@@ -237,32 +262,17 @@ def read_first_sdf_mol(sdf_path: str) -> Chem.Mol | None:
             return m
     return None
 
-def run_vina(receptor_pdbqt: str, ligand_pdbqt: str,
-             center: tuple[float,float,float],
-             size: tuple[float,float,float],
-             exhaustiveness: int,
-             tmpdir: str) -> tuple[str, list[float]]:
-    """
-    Exécute Vina et renvoie (chemin_out_pdbqt, [scores_kcal_mol]).
-    """
-    if not _which("vina"):
-        raise RuntimeError("AutoDock Vina (vina) n'est pas disponible dans l'environnement.")
-
+def run_vina(receptor_pdbqt, ligand_pdbqt, center, size, exhaustiveness, tmpdir):
+    cmd = _find_vina()  # <-- au lieu de tester _which("vina")
     out_pdbqt = Path(tmpdir) / "out_vina.pdbqt"
-    log_path = Path(tmpdir) / "vina.log"
-
-    cx, cy, cz = center
-    sx, sy, sz = size
-
-    cmd = [
-        "vina",
-        "--receptor", receptor_pdbqt,
-        "--ligand", ligand_pdbqt,
+    log_path  = Path(tmpdir) / "vina.log"
+    cx, cy, cz = center; sx, sy, sz = size
+    cmd += [
+        "--receptor", receptor_pdbqt, "--ligand", ligand_pdbqt,
         "--center_x", str(cx), "--center_y", str(cy), "--center_z", str(cz),
         "--size_x", str(sx), "--size_y", str(sy), "--size_z", str(sz),
         "--exhaustiveness", str(exhaustiveness),
-        "--out", str(out_pdbqt),
-        "--log", str(log_path)
+        "--out", str(out_pdbqt), "--log", str(log_path)
     ]
     _run(cmd)
 
@@ -309,7 +319,9 @@ with st.sidebar:
     smiles           = st.text_input("Ou SMILES (fallback)", "CCO")
     contact_cutoff   = st.slider("Seuil contacts (Å)", 3.0, 6.0, 4.0, 0.1)
     clash_cutoff     = st.slider("Seuil clashs (Å)",   1.8, 3.0, 2.5, 0.1)
-
+    vina_bin = os.environ.get("VINA_BIN")
+    st.sidebar.write("VINA_BIN:", vina_bin or "(non défini)")
+    
     st.markdown("---")
     st.subheader("Docking (AutoDock Vina)")
     use_vina = st.checkbox("Activer Vina (docke le ligand)", value=False)
@@ -323,13 +335,9 @@ with st.sidebar:
     sy = st.number_input("Size Y (Å)", min_value=8.0, max_value=60.0, value=default_size[1], step=1.0)
     sz = st.number_input("Size Z (Å)", min_value=8.0, max_value=60.0, value=default_size[2], step=1.0)
 
-
-
 # Toujours définir la variable pour éviter NameError
 ligand_mol = None
 ligand_name_for_display = None
-
-
 
 # ---- Chargement ligands depuis ZIP (si fourni) ----
 if uploaded_zip is not None:
@@ -357,8 +365,6 @@ if uploaded_zip is not None:
     except Exception as e:
         st.sidebar.error(f"Erreur de lecture du ZIP : {e}")
 
-
-
 # ---- Fallback SMILES → 3D si pas de .mol2 utilisable ----
 if ligand_mol is None and smiles:
     sm_mol = smiles_to_3d(smiles)
@@ -368,7 +374,6 @@ if ligand_mol is None and smiles:
         st.sidebar.info("Ligand généré à partir du SMILES (3D).")
     else:
         st.sidebar.warning("SMILES invalide ou génération 3D impossible.")
-
 
 # ---- Logique principale ----
 if uploaded_protein:
