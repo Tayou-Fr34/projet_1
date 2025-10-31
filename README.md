@@ -122,7 +122,8 @@ L’app indique combien de molécules restent après filtrage.
 Les **témoins** servent de modèles pour la comparaison et le pharmacophore.
 
 1. Section **C. Ligands de référence (témoins)**
-2. Importer un ou plusieurs fichiers `.sdf` ou `.smi`
+2. Importer un ou plusieurs fichiers `.sdf` ou `.smi` (2 molécules sont présentes sur github "Structure2D_COMPOUND_CID_2244.sdf" et "Conformer3D_COMPOUND_CID_2519.sdf" afin de les tester. Télécharger et dezipper pour test).
+  
 3. L’application :
 
    * supprime les doublons
@@ -137,7 +138,8 @@ Les **témoins** servent de modèles pour la comparaison et le pharmacophore.
 ## 🎯 6. Criblage *ligand-based*
 
 1. Section **D. Criblage ligand-based**
-2. Importer les **ligands à cribler** (`.sdf` ou `.smi`)
+2. Importer les **ligands à cribler** (`.sdf` ou `.smi`) (2 molécules sont présentes sur github "Structure2D_COMPOUND_CID_2244.sdf" et "Conformer3D_COMPOUND_CID_2519.sdf" afin de les tester. Télécharger et dezipper pour test).
+
 3. Régler :
 
    * **Seuil Tanimoto** (souvent ≥ 0.7)
@@ -204,5 +206,6 @@ Les **témoins** servent de modèles pour la comparaison et le pharmacophore.
 
   * > 0.6 = bonne variété
   * <0.3 = trop de similarité entre composés.
+
 
 
