@@ -6,7 +6,7 @@ Cette application **Streamlit** permet de réaliser un criblage **ligand-based c
 importation de bibliothèques, fusion, filtrage *drug-likeness*, comparaison de similarité, et visualisation **3D / pharmacophore**. C'est une application web interactive développée avec Streamlit et RDKit.
 ##### **_Binôme : Guillaume Patient & Cédric MANELLI_**
 
-Elle permet de :
+Cette application permet de :
 
 - Visualiser des structures moléculaires à partir de chaînes SMILES 🧬
 
@@ -204,4 +204,5 @@ Les **témoins** servent de modèles pour la comparaison et le pharmacophore.
 
   * > 0.6 = bonne variété
   * <0.3 = trop de similarité entre composés.
+
 
