@@ -6,7 +6,7 @@
 # - Filtres Lipinski / Veber / QED
 # - Témoins 3D + pharmacophore superposé
 # - Résultats détaillés (SMILES, Formule, InChIKey, Similarité)
-# Auteur : Guillaume Patient
+# Auteur : Guillaume Patient et Cédric Manelli
 # =====================================================
 
 import os, json, time, random, itertools
@@ -21,35 +21,11 @@ from rdkit.Chem import (
 from rdkit import RDConfig
 from pathlib import Path
 
+
 # =========================
 # 📂 Sélection du dossier LIB_PATH (saisi utilisateur) + détection des libs intégrées
 # =========================
-
-
-st.sidebar.header("📂 Dossier des bibliothèques")
-
-# 👉 mets une valeur par défaut qui te convient
-_default_lib_path = r""
-folder_path = st.sidebar.text_input(
-    "Chemin du dossier contenant les bibliothèques (.sdf) : entre le chemin d'accès pour récupérer les dossiers ou pour les créer.",
-    value=_default_lib_path,
-    placeholder=r"Ex : C:\Users\...\mylibs"
-)
-
-# Vérifie/crée le dossier
-if not folder_path:
-    st.sidebar.warning("❌ Merci de renseigner un chemin d'accès dossier valide pour lancer l'application.")
-    st.stop()
-
-LIB_PATH = Path(folder_path)
-try:
-    LIB_PATH.mkdir(parents=True, exist_ok=True)
-except Exception as e:
-    st.sidebar.error(f"❌ Impossible d'accéder/créer le dossier : {e}")
-    st.stop()
-
-st.sidebar.success(f"Dossier OK ✅ : {LIB_PATH}")
-
+# Fonctions permettant de checker si la librairie est déjà présente ou non et permettant de la générer ou la remplacer.
 def _integrated_targets(base: Path) -> dict[str, str]:
     """Noms attendus des bibliothèques intégrées → chemins cibles dans base."""
     return {
@@ -67,14 +43,144 @@ def detect_integrated_libs(base: Path) -> dict[str, str]:
             out[label] = p
     return out
 
-# Détection initiale
-INTEGRATED = detect_integrated_libs(LIB_PATH)
-if INTEGRATED:
-    st.sidebar.info(f"📦 {len(INTEGRATED)} bibliothèques intégrées détectées :")
-    for k in INTEGRATED:
-        st.sidebar.write(f"- {k}")
-else:
-    st.sidebar.warning("⚠️ Aucune bibliothèque intégrée détectée (tu peux les générer à cette emplacement).")
+# =========================
+# Génération libs intégrées
+# =========================
+# génération des librairies non présente ou pour les remplacer selon le choix de l'utilisateur.
+# une "ensure" qui possède une base de molécules de référence et la fonction "combinatorial" permettant de réaliser 
+# des molécules random à partir de la première base. On donne un indicateur de nombre de molécules souhaitées pour chaque base
+def combinatorial_smiles(cores, subs_A, subs_B, target_n, name_prefix):
+    # (garde ton implémentation telle quelle)
+    out = []
+    random.shuffle(cores); random.shuffle(subs_A); random.shuffle(subs_B)
+    iA = iB = 0
+    for c in cores:
+        for _ in range(len(subs_A)):
+            a = subs_A[iA % len(subs_A)]; iA += 1
+            base = c.replace("*", a) if "*" in c else c + a
+            if "&&" in base:
+                b = subs_B[iB % len(subs_B)]; iB += 1
+                smi = base.replace("&&", b)
+            else:
+                smi = base
+            out.append(smi)
+            if len(out) >= target_n * 3:
+                break
+        if len(out) >= target_n * 3:
+            break
+    mols = []
+    seen = set()
+    for s in out:
+        m = Chem.MolFromSmiles(s)
+        if not m: 
+            continue
+        key = Chem.MolToSmiles(m, isomericSmiles=True)
+        if key in seen: 
+            continue
+        seen.add(key)
+        mols.append(m)
+        if len(mols) >= target_n:
+            break
+    for i, m in enumerate(mols, 1):
+        m.SetProp("_Name", f"{name_prefix}_{i:06d}")
+    return mols
+
+def ensure_integrated_libraries(base: Path, regenerate: bool = False):
+    """(Re)génère les 4 bibliothèques intégrées dans `base` si absentes ou si `regenerate`."""
+    targets = _integrated_targets(base)
+
+    chembl_cores = [
+        "c1ccccc1*", "c1ncccc1*", "c1ccncc1*", "c1ccoc1*", "c1ccsc1*",
+        "c1ccc(-c2ccccc2)cc1*", "c1ccc(NC(=O)*)cc1", "c1ccc(OC*)cc1",
+        "O=C(N*)c1ccccc1", "O=C(O*)c1ccccc1", "c1ccc(C(=O)N*)cc1", "c1ccc(C(=O)O*)cc1",
+    ]
+    chembl_subs_A = ["N", "N(C)C", "O", "OC", "OCC", "CC", "CCO", "CCN", "CN", "C(=O)N", "C(=O)O", "CO", "COC", "CCl", "CF", "CBr"]
+    chembl_subs_B = ["C", "CC", "CCC", "CO", "CN", "OC", "OCC", "N", "NC", "NCC"]
+
+    zinc_cores = ["c1ccccc1", "c1ccncc1", "c1ccoc1", "c1ccsc1", "C1CCCCC1", "C1=CC=CN=C1", "C1=COC=C1", "C1=CSCC1", "C1CCNCC1", "C1COCCN1"]
+    zinc_subs_A = ["", "F", "Cl", "Br", "C", "CC", "OC", "CN", "CF3", "N"]
+    zinc_subs_B = ["", "C", "CC", "CO", "CN"]
+
+    db_cores = ["O=C(N*)c1ccccc1", "O=C(O*)c1ccccc1", "c1ccc(O*)cc1", "c1ccc(N*)cc1", "c1ccc(CCN*)cc1", "c1ccc(CCO*)cc1"]
+    db_subs_A = ["C", "CC", "CCC", "CO", "CN", "N", "N(C)C", "O", "OC", "C(=O)N", "C(=O)O"]
+    db_subs_B = ["C", "CC", "CO", "CN"]
+
+    np_cores = ["C=Cc1ccc(*)cc1", "CC(C)=Cc1ccc(*)cc1", "Oc1ccc(*)cc1", "COc1ccc(*)cc1", "C1CCC(CC1)*", "CC(C)C1=CC(*)=CC=C1"]
+    np_subs_A = ["O", "OC", "OCC", "C", "CC", "CCC", "CO", "CN"]
+    np_subs_B = ["C", "CC", "CCC", "CO", "OC"]
+
+    jobs = [
+        (targets["ChEMBL-subset (~10k)"],      chembl_cores, chembl_subs_A, chembl_subs_B, 10000, "CHEMBL"),
+        (targets["ZINC-fragments (~8k)"],      zinc_cores,   zinc_subs_A,   zinc_subs_B,    8000, "ZINCFRAG"),
+        (targets["DrugBank-core (~2k)"],       db_cores,     db_subs_A,     db_subs_B,      2000, "DBCORE"),
+        (targets["NaturalProducts-core (~5k)"],np_cores,     np_subs_A,     np_subs_B,      5000, "NP"),
+    ]
+
+    for out_path, cores, sA, sB, n, prefix in jobs:
+        if (not regenerate) and Path(out_path).exists():
+            continue
+        st.info(f"⏳ Génération de {os.path.basename(out_path)} ({n} molécules)...")
+        mols = combinatorial_smiles(cores, sA, sB, n, prefix)
+        mols, dups = deduplicate_mols(mols)
+        w = Chem.SDWriter(out_path)
+        for m in mols:
+            w.write(m)
+        w.close()
+        st.success(f"✅ {os.path.basename(out_path)} : {len(mols)} uniques (doublons retirés: {dups}).")
+
+# =========================
+# Chargement fichiers
+# =========================
+# Permettant de créer les molécules à partir d'une biliothèque utilisateur. Chaque fonction permet de convertir l'extension
+# en molécules (3 extensions possibles .sdf, .smi, .csv)
+# une dernière fonction pour les souvegarder en .sdf
+def load_sdf_file(path):
+    suppl = Chem.SDMolSupplier(path)
+    return [m for m in suppl if m]
+
+def load_smi_text(text: str):
+    mols = []
+    for line in text.splitlines():
+        s = line.strip()
+        if not s:
+            continue
+        m = Chem.MolFromSmiles(s)
+        if m:
+            m.SetProp("_Name", s)
+            mols.append(m)
+    return mols
+
+def load_csv_tsv(file_bytes: bytes, sep: str):
+    df = pd.read_csv(StringIO(file_bytes.decode("utf-8", errors="ignore")), sep=sep)
+    cols = {c.lower(): c for c in df.columns}
+    smi_col = cols.get("smiles") or cols.get("smile")
+    name_col = cols.get("name")
+    if not smi_col:
+        raise ValueError("Le fichier ne contient pas de colonne 'smiles'.")
+    mols = []
+    for i, row in df.iterrows():
+        smi = str(row[smi_col]).strip()
+        if not smi or smi.lower() == "nan":
+            continue
+        m = Chem.MolFromSmiles(smi)
+        if m:
+            nm = str(row[name_col]) if name_col else f"Mol_{i+1}"
+            m.SetProp("_Name", nm)
+            mols.append(m)
+    return mols
+
+def save_library_as_sdf(mols, name_hint: str):
+    safe = "".join(c if c.isalnum() or c in ("_", "-") else "_" for c in name_hint).strip("_")
+    if not safe:
+        safe = f"lib_{int(time.time())}"
+    path = os.path.join(LIB_PATH, f"{safe}.sdf")
+    w = Chem.SDWriter(path)
+    for m in mols:
+        w.write(m)
+    w.close()
+    return path, safe
+
+
 
 # =========================
 # Utilitaires moléculaires
@@ -166,137 +272,6 @@ def internal_diversity(mols, sample_pairs=1000):
     return round(1 - sum(sims)/len(sims), 3)
 
 # =========================
-# Chargement fichiers
-# =========================
-def load_sdf_file(path):
-    suppl = Chem.SDMolSupplier(path)
-    return [m for m in suppl if m]
-
-def load_smi_text(text: str):
-    mols = []
-    for line in text.splitlines():
-        s = line.strip()
-        if not s:
-            continue
-        m = Chem.MolFromSmiles(s)
-        if m:
-            m.SetProp("_Name", s)
-            mols.append(m)
-    return mols
-
-def load_csv_tsv(file_bytes: bytes, sep: str):
-    df = pd.read_csv(StringIO(file_bytes.decode("utf-8", errors="ignore")), sep=sep)
-    cols = {c.lower(): c for c in df.columns}
-    smi_col = cols.get("smiles") or cols.get("smile")
-    name_col = cols.get("name")
-    if not smi_col:
-        raise ValueError("Le fichier ne contient pas de colonne 'smiles'.")
-    mols = []
-    for i, row in df.iterrows():
-        smi = str(row[smi_col]).strip()
-        if not smi or smi.lower() == "nan":
-            continue
-        m = Chem.MolFromSmiles(smi)
-        if m:
-            nm = str(row[name_col]) if name_col else f"Mol_{i+1}"
-            m.SetProp("_Name", nm)
-            mols.append(m)
-    return mols
-
-def save_library_as_sdf(mols, name_hint: str):
-    safe = "".join(c if c.isalnum() or c in ("_", "-") else "_" for c in name_hint).strip("_")
-    if not safe:
-        safe = f"lib_{int(time.time())}"
-    path = os.path.join(LIB_PATH, f"{safe}.sdf")
-    w = Chem.SDWriter(path)
-    for m in mols:
-        w.write(m)
-    w.close()
-    return path, safe
-
-# =========================
-# Génération libs intégrées
-# =========================
-def combinatorial_smiles(cores, subs_A, subs_B, target_n, name_prefix):
-    # (garde ton implémentation telle quelle)
-    out = []
-    random.shuffle(cores); random.shuffle(subs_A); random.shuffle(subs_B)
-    iA = iB = 0
-    for c in cores:
-        for _ in range(len(subs_A)):
-            a = subs_A[iA % len(subs_A)]; iA += 1
-            base = c.replace("*", a) if "*" in c else c + a
-            if "&&" in base:
-                b = subs_B[iB % len(subs_B)]; iB += 1
-                smi = base.replace("&&", b)
-            else:
-                smi = base
-            out.append(smi)
-            if len(out) >= target_n * 3:
-                break
-        if len(out) >= target_n * 3:
-            break
-    mols = []
-    seen = set()
-    for s in out:
-        m = Chem.MolFromSmiles(s)
-        if not m: 
-            continue
-        key = Chem.MolToSmiles(m, isomericSmiles=True)
-        if key in seen: 
-            continue
-        seen.add(key)
-        mols.append(m)
-        if len(mols) >= target_n:
-            break
-    for i, m in enumerate(mols, 1):
-        m.SetProp("_Name", f"{name_prefix}_{i:06d}")
-    return mols
-
-def ensure_integrated_libraries(base: Path, regenerate: bool = False):
-    """(Re)génère les 4 bibliothèques intégrées dans `base` si absentes ou si `regenerate`."""
-    targets = _integrated_targets(base)
-
-    chembl_cores = [
-        "c1ccccc1*", "c1ncccc1*", "c1ccncc1*", "c1ccoc1*", "c1ccsc1*",
-        "c1ccc(-c2ccccc2)cc1*", "c1ccc(NC(=O)*)cc1", "c1ccc(OC*)cc1",
-        "O=C(N*)c1ccccc1", "O=C(O*)c1ccccc1", "c1ccc(C(=O)N*)cc1", "c1ccc(C(=O)O*)cc1",
-    ]
-    chembl_subs_A = ["N", "N(C)C", "O", "OC", "OCC", "CC", "CCO", "CCN", "CN", "C(=O)N", "C(=O)O", "CO", "COC", "CCl", "CF", "CBr"]
-    chembl_subs_B = ["C", "CC", "CCC", "CO", "CN", "OC", "OCC", "N", "NC", "NCC"]
-
-    zinc_cores = ["c1ccccc1", "c1ccncc1", "c1ccoc1", "c1ccsc1", "C1CCCCC1", "C1=CC=CN=C1", "C1=COC=C1", "C1=CSCC1", "C1CCNCC1", "C1COCCN1"]
-    zinc_subs_A = ["", "F", "Cl", "Br", "C", "CC", "OC", "CN", "CF3", "N"]
-    zinc_subs_B = ["", "C", "CC", "CO", "CN"]
-
-    db_cores = ["O=C(N*)c1ccccc1", "O=C(O*)c1ccccc1", "c1ccc(O*)cc1", "c1ccc(N*)cc1", "c1ccc(CCN*)cc1", "c1ccc(CCO*)cc1"]
-    db_subs_A = ["C", "CC", "CCC", "CO", "CN", "N", "N(C)C", "O", "OC", "C(=O)N", "C(=O)O"]
-    db_subs_B = ["C", "CC", "CO", "CN"]
-
-    np_cores = ["C=Cc1ccc(*)cc1", "CC(C)=Cc1ccc(*)cc1", "Oc1ccc(*)cc1", "COc1ccc(*)cc1", "C1CCC(CC1)*", "CC(C)C1=CC(*)=CC=C1"]
-    np_subs_A = ["O", "OC", "OCC", "C", "CC", "CCC", "CO", "CN"]
-    np_subs_B = ["C", "CC", "CCC", "CO", "OC"]
-
-    jobs = [
-        (targets["ChEMBL-subset (~10k)"],      chembl_cores, chembl_subs_A, chembl_subs_B, 10000, "CHEMBL"),
-        (targets["ZINC-fragments (~8k)"],      zinc_cores,   zinc_subs_A,   zinc_subs_B,    8000, "ZINCFRAG"),
-        (targets["DrugBank-core (~2k)"],       db_cores,     db_subs_A,     db_subs_B,      2000, "DBCORE"),
-        (targets["NaturalProducts-core (~5k)"],np_cores,     np_subs_A,     np_subs_B,      5000, "NP"),
-    ]
-
-    for out_path, cores, sA, sB, n, prefix in jobs:
-        if (not regenerate) and Path(out_path).exists():
-            continue
-        st.info(f"⏳ Génération de {os.path.basename(out_path)} ({n} molécules)...")
-        mols = combinatorial_smiles(cores, sA, sB, n, prefix)
-        mols, dups = deduplicate_mols(mols)
-        w = Chem.SDWriter(out_path)
-        for m in mols:
-            w.write(m)
-        w.close()
-        st.success(f"✅ {os.path.basename(out_path)} : {len(mols)} uniques (doublons retirés: {dups}).")
-
-# =========================
 # Règles filtres drug-likeness
 # =========================
 def passes_lipinski(m):
@@ -373,6 +348,46 @@ def show_pharmacophore(points, ref_mols=None, superpose=False):
 # =========================
 # UI
 # =========================
+
+st.sidebar.header("📂 Dossier des bibliothèques")
+
+'''
+Ici on met une valeur par defaut qui est vide (afin de simplifier). L'application va donc retourner
+un warning en signalant qu'il ne trouve pas le chemin. L'utilisateur va donc entrer un chemin sur sa machine 
+afin que l'application puisse démarer
+'''
+
+_default_lib_path = r""
+folder_path = st.sidebar.text_input(
+    "Chemin du dossier contenant les bibliothèques (.sdf) : entre le chemin d'accès pour récupérer les dossiers ou pour les créer.",
+    value=_default_lib_path,
+    placeholder=r"Ex : C:\Users\...\mylibs"
+)
+
+# Vérifie/crée le dossier
+if not folder_path:
+    st.sidebar.warning("❌ Merci de renseigner un chemin d'accès dossier valide pour lancer l'application.")
+    st.stop()
+
+LIB_PATH = Path(folder_path)
+try:
+    LIB_PATH.mkdir(parents=True, exist_ok=True)
+except Exception as e:
+    st.sidebar.error(f"❌ Impossible d'accéder/créer le dossier : {e}")
+    st.stop()
+
+st.sidebar.success(f"Dossier OK ✅ : {LIB_PATH}")
+
+# Détection initiale
+INTEGRATED = detect_integrated_libs(LIB_PATH)
+if INTEGRATED:
+    st.sidebar.info(f"📦 {len(INTEGRATED)} bibliothèques intégrées détectées :")
+    for k in INTEGRATED:
+        st.sidebar.write(f"- {k}")
+else:
+    st.sidebar.warning("⚠️ Aucune bibliothèque intégrée détectée (tu peux les générer à cette emplacement).")
+
+
 st.set_page_config(page_title="Criblage LB — libs intégrées + filtres", layout="wide")
 st.title("🧬 Criblage Ligand-Based — Libs intégrées, fusion, filtres & pharmacophore")
 
