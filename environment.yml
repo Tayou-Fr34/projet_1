@@ -1,0 +1,16 @@
+name: chemapp-v2-env
+
+channels:
+  - conda-forge
+  - defaults
+
+dependencies:
+  - python=3.12
+  - pip
+  - pandas
+  - rdkit
+  - streamlit
+  - py3dmol
+
+  - pip:
+      - streamlit-option-menu
