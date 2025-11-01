@@ -22,10 +22,11 @@ from rdkit import RDConfig
 from pathlib import Path
 
 
+
 # =========================
 # 📂 Sélection du dossier LIB_PATH (saisi utilisateur) + détection des libs intégrées
 # =========================
-# Fonctions permettant de checker si la librairie est déjà présente ou non et permettant de la générer ou la remplacer.
+# Fonctions permettant de checker si la librairie est déjà présente ou non et permettent de la générer ou la remplacer.
 def _integrated_targets(base: Path) -> dict[str, str]:
     """Noms attendus des bibliothèques intégrées → chemins cibles dans base."""
     return {
@@ -43,12 +44,69 @@ def detect_integrated_libs(base: Path) -> dict[str, str]:
             out[label] = p
     return out
 
+
+
+
+
+
+
+
+
 # =========================
 # Génération libs intégrées
 # =========================
-# génération des librairies non présente ou pour les remplacer selon le choix de l'utilisateur.
-# une "ensure" qui possède une base de molécules de référence et la fonction "combinatorial" permettant de réaliser 
-# des molécules random à partir de la première base. On donne un indicateur de nombre de molécules souhaitées pour chaque base
+# génère ou remplace des librairies selon le choix de l'utilisateur.
+
+
+#fonction 'ensure' où une base de molécules est présente. 
+def integrated_libraries(base: Path, regenerate: bool = False):
+    """(Re)génère les 4 bibliothèques intégrées dans `base` si absentes ou si `regenerate`."""
+    targets = _integrated_targets(base)
+
+    chembl_cores = [
+        "&&c1ccccc1*", "c1ncccc1*", "&&c1ccncc1*", "c1ccoc1*", "&&c1ccsc1",
+        "c1ccc(-c2ccccc2)cc1*", "&&c1ccc(NC(=O)*)cc1", "&&c1ccc(OC*)cc1",
+        "O=C(N*)c1ccccc1", "O=C(O*)c1ccccc1", "c1ccc(C(=O)N*)cc1", "c1ccc(C(=O)O*)cc1",
+    ]
+    chembl_subs_A = ["N", "N(C)C", "O", "OC", "OCC", "CC", "CCO", "CCN", "CN", "C(=O)N", "C(=O)O", "CO", "COC", "CCl", "CF", "CBr"]
+    chembl_subs_B = ["C", "CC", "CCC", "CO", "CN", "OC", "OCC", "N", "NC", "NCC"]
+
+    zinc_cores = ["c1ccccc1", "c1ccncc1", "c1ccoc1", "c1ccsc1", "C1CCCCC1", "C1=CC=CN=C1", "C1=COC=C1", "C1=CSCC1", "C1CCNCC1", "C1COCCN1"]
+    zinc_subs_A = ["", "F", "Cl", "Br", "C", "CC", "OC", "CN", "CF3", "N"]
+    zinc_subs_B = ["", "C", "CC", "CO", "CN"]
+
+    db_cores = ["O=C(N*)c1ccccc1&&", "O=C(O*)c1ccccc1", "c1ccc(O*)cc1", "c1ccc(N*)cc1", "&&c1ccc(CCN*)cc1", "c1ccc(CCO*)cc1"]
+    db_subs_A = ["C", "CC", "CCC", "CO", "CN", "N", "N(C)C", "O", "OC", "C(=O)N", "C(=O)O"]
+    db_subs_B = ["C", "CC", "CO", "CN"]
+
+    np_cores = ["C=Cc1ccc(*)cc1", "&&CC(C)=Cc1ccc(*)cc1", "Oc1ccc(*)cc1", "&&COc1ccc(*)cc1", "&&C1CCC(CC1)*", "CC(C)C1=CC(*)=CC=C1"]
+    np_subs_A = ["O", "OC", "OCC", "C", "CC", "CCC", "CO", "CN"]
+    np_subs_B = ["C", "CC", "CCC", "CO", "OC"]
+
+    jobs = [
+        (targets["ChEMBL-subset (~10k)"],      chembl_cores, chembl_subs_A, chembl_subs_B, 10000, "CHEMBL"),
+        (targets["ZINC-fragments (~8k)"],      zinc_cores,   zinc_subs_A,   zinc_subs_B,    8000, "ZINCFRAG"),
+        (targets["DrugBank-core (~2k)"],       db_cores,     db_subs_A,     db_subs_B,      2000, "DBCORE"),
+        (targets["NaturalProducts-core (~5k)"],np_cores,     np_subs_A,     np_subs_B,      5000, "NP"),
+    ]
+
+    for out_path, cores, sA, sB, n, prefix in jobs:
+        if (not regenerate) and Path(out_path).exists():
+            continue
+        st.info(f"⏳ Génération de {os.path.basename(out_path)} ({n} molécules)...")
+        mols = combinatorial_smiles(cores, sA, sB, n, prefix)
+        mols, dups = deduplicate_mols(mols)
+        w = Chem.SDWriter(out_path)
+        for m in mols:
+            w.write(m)
+        w.close()
+        st.success(f"✅ {os.path.basename(out_path)} : {len(mols)} uniques (doublons retirés: {dups}).")
+
+
+
+
+
+#fonction pour générer des molécules aléatoirements grace de données  'ensure'
 def combinatorial_smiles(cores, subs_A, subs_B, target_n, name_prefix):
     # (garde ton implémentation telle quelle)
     out = []
@@ -85,55 +143,24 @@ def combinatorial_smiles(cores, subs_A, subs_B, target_n, name_prefix):
         m.SetProp("_Name", f"{name_prefix}_{i:06d}")
     return mols
 
-def ensure_integrated_libraries(base: Path, regenerate: bool = False):
-    """(Re)génère les 4 bibliothèques intégrées dans `base` si absentes ou si `regenerate`."""
-    targets = _integrated_targets(base)
 
-    chembl_cores = [
-        "c1ccccc1*", "c1ncccc1*", "c1ccncc1*", "c1ccoc1*", "c1ccsc1*",
-        "c1ccc(-c2ccccc2)cc1*", "c1ccc(NC(=O)*)cc1", "c1ccc(OC*)cc1",
-        "O=C(N*)c1ccccc1", "O=C(O*)c1ccccc1", "c1ccc(C(=O)N*)cc1", "c1ccc(C(=O)O*)cc1",
-    ]
-    chembl_subs_A = ["N", "N(C)C", "O", "OC", "OCC", "CC", "CCO", "CCN", "CN", "C(=O)N", "C(=O)O", "CO", "COC", "CCl", "CF", "CBr"]
-    chembl_subs_B = ["C", "CC", "CCC", "CO", "CN", "OC", "OCC", "N", "NC", "NCC"]
 
-    zinc_cores = ["c1ccccc1", "c1ccncc1", "c1ccoc1", "c1ccsc1", "C1CCCCC1", "C1=CC=CN=C1", "C1=COC=C1", "C1=CSCC1", "C1CCNCC1", "C1COCCN1"]
-    zinc_subs_A = ["", "F", "Cl", "Br", "C", "CC", "OC", "CN", "CF3", "N"]
-    zinc_subs_B = ["", "C", "CC", "CO", "CN"]
 
-    db_cores = ["O=C(N*)c1ccccc1", "O=C(O*)c1ccccc1", "c1ccc(O*)cc1", "c1ccc(N*)cc1", "c1ccc(CCN*)cc1", "c1ccc(CCO*)cc1"]
-    db_subs_A = ["C", "CC", "CCC", "CO", "CN", "N", "N(C)C", "O", "OC", "C(=O)N", "C(=O)O"]
-    db_subs_B = ["C", "CC", "CO", "CN"]
 
-    np_cores = ["C=Cc1ccc(*)cc1", "CC(C)=Cc1ccc(*)cc1", "Oc1ccc(*)cc1", "COc1ccc(*)cc1", "C1CCC(CC1)*", "CC(C)C1=CC(*)=CC=C1"]
-    np_subs_A = ["O", "OC", "OCC", "C", "CC", "CCC", "CO", "CN"]
-    np_subs_B = ["C", "CC", "CCC", "CO", "OC"]
 
-    jobs = [
-        (targets["ChEMBL-subset (~10k)"],      chembl_cores, chembl_subs_A, chembl_subs_B, 10000, "CHEMBL"),
-        (targets["ZINC-fragments (~8k)"],      zinc_cores,   zinc_subs_A,   zinc_subs_B,    8000, "ZINCFRAG"),
-        (targets["DrugBank-core (~2k)"],       db_cores,     db_subs_A,     db_subs_B,      2000, "DBCORE"),
-        (targets["NaturalProducts-core (~5k)"],np_cores,     np_subs_A,     np_subs_B,      5000, "NP"),
-    ]
 
-    for out_path, cores, sA, sB, n, prefix in jobs:
-        if (not regenerate) and Path(out_path).exists():
-            continue
-        st.info(f"⏳ Génération de {os.path.basename(out_path)} ({n} molécules)...")
-        mols = combinatorial_smiles(cores, sA, sB, n, prefix)
-        mols, dups = deduplicate_mols(mols)
-        w = Chem.SDWriter(out_path)
-        for m in mols:
-            w.write(m)
-        w.close()
-        st.success(f"✅ {os.path.basename(out_path)} : {len(mols)} uniques (doublons retirés: {dups}).")
+
+
+
+
+
 
 # =========================
 # Chargement fichiers
 # =========================
 # Permettant de créer les molécules à partir d'une biliothèque utilisateur. Chaque fonction permet de convertir l'extension
-# en molécules (3 extensions possibles .sdf, .smi, .csv)
-# une dernière fonction pour les souvegarder en .sdf
+# en extension sdf (3 extensions possibles .sdf, .smi, .csv)
+
 def load_sdf_file(path):
     suppl = Chem.SDMolSupplier(path)
     return [m for m in suppl if m]
@@ -182,9 +209,18 @@ def save_library_as_sdf(mols, name_hint: str):
 
 
 
+
+
+
+
+
 # =========================
 # Utilitaires moléculaires
 # =========================
+
+# deduplicate_mols, canonical_smiles et to_inchikey
+# pour avoir une identification unique des molécules
+# pour eviter les doublons
 def to_inchikey(mol):
     try:
         from rdkit.Chem.inchi import MolToInchiKey
@@ -212,6 +248,7 @@ def deduplicate_mols(mols):
         uniq.append(m)
     return uniq, dups
 
+#afin de retourner les propriétés physicos chimiques de la molécule tel que le nom, sa formule, la masse moléculaire, son LogP ...
 def compute_props(mol):
     m = Chem.RemoveHs(mol)
     return {
@@ -226,6 +263,7 @@ def compute_props(mol):
         "QED": round(QED.qed(m), 3),
     }
 
+# afin de retourner les coordonnées 3D de la molécules
 def molblock3d(mol):
     if mol.GetNumConformers() == 0:
         m = Chem.AddHs(Chem.Mol(mol))
@@ -234,6 +272,7 @@ def molblock3d(mol):
         return Chem.MolToMolBlock(m)
     return Chem.MolToMolBlock(mol)
 
+# pour la representation 3D en utilisant Py3Dmol
 def show3d(mol, width=420, height=420):
     import py3Dmol
     v = py3Dmol.view(width=width, height=height)
@@ -242,13 +281,16 @@ def show3d(mol, width=420, height=420):
     v.zoomTo()
     st.components.v1.html(v._make_html(), height=height+20)
 
+# pour déterminer l'empreinte moléculaire de chaque espèce (fingerprint). conversion en binaire afin de faire une comparaison tanimoto
 def morgan_fp(m, radius=2, nBits=2048):
     return AllChem.GetMorganFingerprintAsBitVect(m, radius, nBits)
 
+# la fonction tanimoto permet de calculer la similarité entre une molécule et une autre (ou molécule -> ligand)
 def tanimoto(m1, fp2):
     fp1 = morgan_fp(m1)
     return DataStructs.TanimotoSimilarity(fp1, fp2)
 
+# afin d'assurer que la chimiothèque est assez diverse. criblage dans une large palette d'espèces
 def internal_diversity(mols, sample_pairs=1000):
     """Diversité interne = distance Tanimoto moyenne = 1 - sim moyenne (échantillonnée)."""
     if len(mols) < 2:
@@ -271,9 +313,16 @@ def internal_diversity(mols, sample_pairs=1000):
         return 0.0
     return round(1 - sum(sims)/len(sims), 3)
 
+
+
+
+
+
 # =========================
 # Règles filtres drug-likeness
 # =========================
+
+#calcule de druguabilité des molécules
 def passes_lipinski(m):
     p = compute_props(m)
     return (p["Masse moléculaire (g/mol)"] <= 500 and p["LogP"] <= 5 and p["HBD"] <= 5 and p["HBA"] <= 10)
@@ -298,9 +347,16 @@ def apply_filters(mols, use_lipinski, use_veber, use_qed, qed_thresh):
         out = [m for m in out if passes_qed(m, qed_thresh)]
     return out
 
+
+
+
+
+
+
 # =========================
 # Pharmacophore
 # =========================
+#Générer une pharmacophore qui peut être utilisé dans un autre logiciel
 def pharmacophore_points(mols):
     ff = ChemicalFeatures.BuildFeatureFactory(
         os.path.join(RDConfig.RDDataDir, "BaseFeatures.fdef")
@@ -314,7 +370,6 @@ def pharmacophore_points(mols):
                 "type": f.GetFamily(), "x": p.x, "y": p.y, "z": p.z
             })
     return pts
-
 def show_pharmacophore(points, ref_mols=None, superpose=False):
     import py3Dmol
     color_map = {
@@ -345,17 +400,44 @@ def show_pharmacophore(points, ref_mols=None, superpose=False):
 | 🟦 Cyan | NegIonizable | Groupe acide |
 """)
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 # =========================
 # UI
 # =========================
 
+
+
+st.set_page_config(page_title="LigandScope", layout="wide")
+st.title("🧬 LigandScope : Criblage Ligand-Based")
+
+
+
 st.sidebar.header("📂 Dossier des bibliothèques")
 
-'''
-Ici on met une valeur par defaut qui est vide (afin de simplifier). L'application va donc retourner
-un warning en signalant qu'il ne trouve pas le chemin. L'utilisateur va donc entrer un chemin sur sa machine 
-afin que l'application puisse démarer
-'''
+#
+#Ici on met un chemin par defaut qui est vide (afin de simplifier). L'application va donc retourner
+#un warning en signalant qu'il ne trouve pas le chemin. L'utilisateur va donc entrer un chemin sur sa machine 
+#afin que l'application puisse démarer
+#'''
 
 _default_lib_path = r""
 folder_path = st.sidebar.text_input(
@@ -363,6 +445,12 @@ folder_path = st.sidebar.text_input(
     value=_default_lib_path,
     placeholder=r"Ex : C:\Users\...\mylibs"
 )
+
+
+
+
+
+
 
 # Vérifie/crée le dossier
 if not folder_path:
@@ -378,6 +466,14 @@ except Exception as e:
 
 st.sidebar.success(f"Dossier OK ✅ : {LIB_PATH}")
 
+
+
+
+
+
+
+
+
 # Détection initiale
 INTEGRATED = detect_integrated_libs(LIB_PATH)
 if INTEGRATED:
@@ -388,20 +484,24 @@ else:
     st.sidebar.warning("⚠️ Aucune bibliothèque intégrée détectée (tu peux les générer à cette emplacement).")
 
 
-st.set_page_config(page_title="Criblage LB — libs intégrées + filtres", layout="wide")
-st.title("🧬 Criblage Ligand-Based — Libs intégrées, fusion, filtres & pharmacophore")
+
+
+
+
+
+
 
 # -------- Gestion des chimiothèques intégrées --------
 with st.expander("⚙️ Gestion des chimiothèques intégrées", expanded=False):
     c1, c2, c3 = st.columns(3)
     with c1:
         if st.button("🧱 Créer/mettre à jour (si absentes)"):
-            ensure_integrated_libraries(LIB_PATH, regenerate=False)
+            integrated_libraries(LIB_PATH, regenerate=False)
             INTEGRATED = detect_integrated_libs(LIB_PATH)
             st.success(f"OK. Détectées : {len(INTEGRATED)}")
     with c2:
         if st.button("♻️ Régénérer (remplacer)"):
-            ensure_integrated_libraries(LIB_PATH, regenerate=True)
+            integrated_libraries(LIB_PATH, regenerate=True)
             INTEGRATED = detect_integrated_libs(LIB_PATH)
             st.success(f"Recréées. Détectées : {len(INTEGRATED)}")
     with c3:
@@ -413,6 +513,15 @@ with st.expander("⚙️ Gestion des chimiothèques intégrées", expanded=False
 if "user_libs" not in st.session_state:
     st.session_state.user_libs = {}
 
+
+
+
+
+
+
+
+
+
 # --------- Bloc A : Sélection & fusion des bibliothèques ----------
 st.header("🗂️ A. Sélection & fusion de chimiothèques")
 available_libs = {**INTEGRATED, **st.session_state.user_libs}
@@ -422,7 +531,10 @@ selected = st.multiselect(
     default=list(INTEGRATED.keys())[:1]  # par défaut la première intégrée
 )
 
+
+
 # Ajout de bibliothèque personnalisée
+# verifie la présence de up afin d'importer la biliothèque utilisateur et la traiter selon le type de fichier (.ext)
 with st.expander("➕ Ajouter ma propre chimiothèque (.sdf / .smi / .csv / .tsv)", expanded=False):
     new_name = st.text_input("Nom de la bibliothèque :", value="MaBibliotheque")
     up = st.file_uploader("Importer le fichier", type=["sdf","smi","csv","tsv"])
@@ -449,6 +561,8 @@ with st.expander("➕ Ajouter ma propre chimiothèque (.sdf / .smi / .csv / .tsv
                 st.warning("Aucune molécule valide trouvée.")
         except Exception as e:
             st.error(f"Échec d'import : {e}")
+
+
 
 # Charger & dédupliquer chaque lib sélectionnée + montrer métriques
 components_per_lib = {}
@@ -484,6 +598,20 @@ if selected:
 else:
     st.info("👉 Sélectionne au moins une bibliothèque (tu peux aussi en ajouter une personnelle).")
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 # --------- Bloc B : Filtres drug-likeness ----------
 st.header("🧪 B. Filtres drug-likeness (optionnels)")
 c1, c2, c3 = st.columns(3)
@@ -501,6 +629,18 @@ filtered_lib = apply_filters(merged, use_lipinski, use_veber, use_qed, qed_thres
 if selected:
     st.info(f"🎛️ Bibliothèque finale après filtres : {len(filtered_lib)} molécules uniques.")
     st.caption("Astuce : si la bibliothèque devient trop petite, desserre les critères.")
+
+
+
+
+
+
+
+
+
+
+
+
 
 # --------- Bloc C : Ligands témoins ----------
 st.header("🧬 C. Ligands de référence (témoins)")
@@ -538,11 +678,24 @@ if ref_files:
 else:
     st.info("👉 Importez des témoins pour activer la visualisation et le pharmacophore.")
 
+
+
+
+
+
+
+
+
+
+
+
+
+
 # --------- Bloc D : Criblage ----------
 st.header("🎯 D. Criblage ligand-based")
 qry_files = st.file_uploader("Importer ligands à cribler (.sdf ou .smi)", type=["sdf","smi"], accept_multiple_files=True)
 qry_mols = []
-print(qry_files)
+
 if qry_files:
     for f in qry_files:
         if f.name.lower().endswith(".sdf"):
@@ -611,6 +764,22 @@ if st.button("🚀 Lancer le criblage"):
             st.caption(f"🎯 {len(df)} lignes — {df['SMILES similaire'].nunique()} hits uniques (par SMILES).")
         else:
             st.info("Aucun hit au-dessus du seuil défini.")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 # --------- Bloc E : Pharmacophore ----------
 st.header("🧩 E. Pharmacophore 3D des témoins")
