@@ -53,7 +53,7 @@ conda activate chemapp-v2-env
 ```
 3️⃣ Lancer l’application Streamlit
 ```
-streamlit run app_criblage_up6-2
+streamlit run app_criblage_up6-2.py
 ```
 
 ## 🧱 2. Génération et gestion des chimiothèques intégrées
@@ -206,6 +206,7 @@ Les **témoins** servent de modèles pour la comparaison et le pharmacophore.
 
   * > 0.6 = bonne variété
   * <0.3 = trop de similarité entre composés.
+
 
 
 
